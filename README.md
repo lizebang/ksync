@@ -1,9 +1,9 @@
 # ksync
 
 ```shell
-export GIT_NAME=k8s-acr-io
-export GIT_EMAIL=202559587@qq.com
-export GIT_TOKEN=3fc643557efe7ef37c016cc9667066e348474ec3
-export REPO_DIR=gcr-io
-export REPO_URL=https://github.com/k8s-acr-io/gcr-io.git
+export GIT_NAME=<your-github-name>
+export GIT_EMAIL=<your-github-email>
+export GIT_TOKEN=<your-github-token>
+export REPO_DIR=<repo-directory-path>
+export REPO_URL=<repo-github-url>
 ```
