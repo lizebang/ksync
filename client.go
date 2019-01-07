@@ -2,14 +2,16 @@ package main
 
 import (
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/google"
+	gogit "gopkg.in/src-d/go-git.v4"
 
 	"github.com/lizebang/ksync/pkg/gcr"
 	"github.com/lizebang/ksync/pkg/git"
-	"github.com/lizebang/ksync/pkg/list"
 	"github.com/lizebang/ksync/pkg/log"
 )
 
@@ -17,14 +19,7 @@ type Client struct {
 	dir string
 	url string
 	git *git.Client
-
-	current  list.Projects
-	projects list.Projects
 }
-
-const (
-	projects = "projects.json"
-)
 
 func NewClient() *Client {
 	return &Client{
@@ -55,24 +50,62 @@ func (c *Client) Init() error {
 	}
 
 	err := c.git.PlainClone(c.dir, c.url)
+	if err != nil && err != gogit.ErrRepositoryAlreadyExists {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) Run() {
+	repo, err := gogit.PlainOpen(c.dir)
+	if err != nil {
+		panic(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		panic(err)
+	}
+	st, err := wt.Status()
+	if err != nil {
+		panic(err)
+	}
+	for key, val := range st {
+		println(key, val.Extra, val.Staging, val.Worktree)
+	}
+
+	gcr.Walk("gcr.io/google-containers", c.walk)
+}
+
+func (c *Client) walk(repo name.Repository, tags *google.Tags, err error) error {
 	if err != nil {
 		return err
 	}
 
-	c.current = list.NewProjects()
-	name := filepath.Join(c.dir, projects)
-	if fileExist(name) {
-		c.projects, err = list.Open(name)
+	for _, value := range tags.Children {
+		os.MkdirAll(path.Join(c.dir, repo.RepositoryStr(), value), 0755)
+	}
+
+	for digest, manifest := range tags.Manifests {
+		dockerfile := "FROM "
+		file, err := os.OpenFile(filepath.Join(c.dir, repo.RepositoryStr(), strings.TrimPrefix(digest, "sha256:")), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			return err
 		}
-	} else {
-		file, err := os.Create(name)
-		if err != nil {
-			return err
+		if len(repo.RegistryStr()) > 0 {
+			dockerfile += repo.RegistryStr() + "/"
 		}
+		dockerfile += repo.RepositoryStr() + "@" + digest
+		file.WriteString(dockerfile)
 		file.Close()
-		c.projects = list.NewProjects()
+
+		for _, tag := range manifest.Tags {
+			file, err := os.OpenFile(filepath.Join(c.dir, repo.RepositoryStr(), tag), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				return err
+			}
+			file.WriteString(dockerfile)
+			file.Close()
+		}
 	}
 
 	return nil
@@ -84,12 +117,4 @@ func fileExist(name string) bool {
 		return false
 	}
 	return true
-}
-
-func (c *Client) Run() {
-	gcr.Walk("gcr.io/google-containers", c.walk)
-}
-
-func (c *Client) walk(repo name.Repository, tags *google.Tags, err error) error {
-	return nil
 }

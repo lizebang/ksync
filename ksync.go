@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/robfig/cron"
+	// "github.com/robfig/cron"
 
 	"github.com/lizebang/ksync/pkg/log"
 )
@@ -16,11 +16,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	cr := cron.New()
-	err = cr.AddJob("0 0 0 * * *", cl)
-	if err != nil {
-		log.Error(err.Error())
-		os.Exit(1)
-	}
-	cr.Run()
+	cl.Run()
+	// cr := cron.New()
+	// err = cr.AddJob("0 0 0 * * *", cl)
+	// if err != nil {
+	// 	log.Error(err.Error())
+	// 	os.Exit(1)
+	// }
+	// cr.Run()
 }
