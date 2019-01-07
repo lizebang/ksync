@@ -4,42 +4,34 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
+	"time"
 
-	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/google"
+	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
+
 	gogit "gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing/object"
 
-	"github.com/lizebang/ksync/pkg/gcr"
-	"github.com/lizebang/ksync/pkg/git"
-	"github.com/lizebang/ksync/pkg/log"
+	"github.com/lizebang/ksync/log"
 )
 
 type Client struct {
+	pjs []string
+
 	dir string
 	url string
-	git *git.Client
+
+	name  string
+	email string
+	token string
+	repo  *gogit.Repository
+	wktr  *gogit.Worktree
 }
 
 func NewClient() *Client {
-	return &Client{
-		git: &git.Client{},
-	}
+	return &Client{}
 }
 
-func (c *Client) Init() error {
-	c.git.Name = os.Getenv("GIT_NAME")
-	if c.git.Name == "" {
-		log.Fatal("$GIT_NAME must be set")
-	}
-	c.git.Email = os.Getenv("GIT_EMAIL")
-	if c.git.Email == "" {
-		log.Fatal("$GIT_EMAIL must be set")
-	}
-	c.git.Token = os.Getenv("GIT_TOKEN")
-	if c.git.Token == "" {
-		log.Fatal("$GIT_TOKEN must be set")
-	}
+func (c *Client) Init() (err error) {
 	c.dir = os.Getenv("REPO_DIR")
 	if c.dir == "" {
 		log.Fatal("$REPO_DIR must be set")
@@ -49,72 +41,124 @@ func (c *Client) Init() error {
 		log.Fatal("$REPO_URL must be set")
 	}
 
-	err := c.git.PlainClone(c.dir, c.url)
+	c.name = os.Getenv("GIT_NAME")
+	if c.name == "" {
+		log.Fatal("$GIT_NAME must be set")
+	}
+	c.email = os.Getenv("GIT_EMAIL")
+	if c.email == "" {
+		log.Fatal("$GIT_EMAIL must be set")
+	}
+	c.token = os.Getenv("GIT_TOKEN")
+	if c.token == "" {
+		log.Fatal("$GIT_TOKEN must be set")
+	}
+
+	c.repo, err = gogit.PlainClone(c.dir, false, &gogit.CloneOptions{
+		URL: c.url,
+		Auth: &http.BasicAuth{
+			Username: c.name,
+			Password: c.token,
+		},
+	})
 	if err != nil && err != gogit.ErrRepositoryAlreadyExists {
 		return err
 	}
-	return nil
-}
-
-func (c *Client) Run() {
-	repo, err := gogit.PlainOpen(c.dir)
-	if err != nil {
-		panic(err)
-	}
-	wt, err := repo.Worktree()
-	if err != nil {
-		panic(err)
-	}
-	st, err := wt.Status()
-	if err != nil {
-		panic(err)
-	}
-	for key, val := range st {
-		println(key, val.Extra, val.Staging, val.Worktree)
-	}
-
-	gcr.Walk("gcr.io/google-containers", c.walk)
-}
-
-func (c *Client) walk(repo name.Repository, tags *google.Tags, err error) error {
-	if err != nil {
-		return err
-	}
-
-	for _, value := range tags.Children {
-		os.MkdirAll(path.Join(c.dir, repo.RepositoryStr(), value), 0755)
-	}
-
-	for digest, manifest := range tags.Manifests {
-		dockerfile := "FROM "
-		file, err := os.OpenFile(filepath.Join(c.dir, repo.RepositoryStr(), strings.TrimPrefix(digest, "sha256:")), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil && err == gogit.ErrRepositoryAlreadyExists {
+		c.repo, err = gogit.PlainOpen(c.dir)
 		if err != nil {
 			return err
 		}
-		if len(repo.RegistryStr()) > 0 {
-			dockerfile += repo.RegistryStr() + "/"
-		}
-		dockerfile += repo.RepositoryStr() + "@" + digest
-		file.WriteString(dockerfile)
-		file.Close()
+	}
+	c.wktr, err = c.repo.Worktree()
+	return
+}
 
-		for _, tag := range manifest.Tags {
-			file, err := os.OpenFile(filepath.Join(c.dir, repo.RepositoryStr(), tag), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-			if err != nil {
-				return err
-			}
-			file.WriteString(dockerfile)
-			file.Close()
+func (c *Client) Run() {
+	c.run()
+}
+
+func (c *Client) run() {
+	err := c.initRun()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, val := range c.pjs {
+		err = os.RemoveAll(path.Join(c.dir, val))
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
 
+	err = c.gcrRun()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = c.wktr.AddGlob(".")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = c.acrRun()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = c.overRun()
+}
+
+func (c *Client) initRun() error {
+	err := c.wktr.Pull(&gogit.PullOptions{
+		Auth: &http.BasicAuth{
+			Username: c.name,
+			Password: c.token,
+		},
+	})
+	if err != nil && err != gogit.NoErrAlreadyUpToDate {
+		return err
+	}
+
+	file, err := os.OpenFile(filepath.Join(c.dir, gcrprojects), os.O_RDONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return c.getProjectList(file)
+}
+
+func (c *Client) gcrRun() error {
+	for _, val := range c.pjs {
+		err := c.gcrWalk("gcr.io/"+val, c.gcrWalkFunc)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func fileExist(name string) bool {
-	_, err := os.Stat(name)
-	if err != nil && os.IsNotExist(err) {
-		return false
+func (c *Client) acrRun() error {
+	return nil
+}
+
+func (c *Client) overRun() error {
+	commit, err := c.wktr.Commit("update", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  c.name,
+			Email: c.email,
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		return err
 	}
-	return true
+	_, err = c.repo.CommitObject(commit)
+	if err != nil {
+		return err
+	}
+	return c.repo.Push(&gogit.PushOptions{
+		Auth: &http.BasicAuth{
+			Username: c.name,
+			Password: c.token,
+		},
+	})
 }

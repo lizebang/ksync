@@ -3,25 +3,27 @@ package main
 import (
 	"os"
 
-	// "github.com/robfig/cron"
+	gocron "github.com/robfig/cron"
 
-	"github.com/lizebang/ksync/pkg/log"
+	"github.com/lizebang/ksync/log"
 )
 
 func main() {
-	cl := NewClient()
-	err := cl.Init()
+	client := NewClient()
+	err := client.Init()
 	if err != nil {
-		log.Error(err.Error())
+		log.Error(err)
 		os.Exit(1)
 	}
 
-	cl.Run()
-	// cr := cron.New()
-	// err = cr.AddJob("0 0 0 * * *", cl)
-	// if err != nil {
-	// 	log.Error(err.Error())
-	// 	os.Exit(1)
-	// }
-	// cr.Run()
+	client.Run()
+
+	cron := gocron.New()
+	err = cron.AddJob("0 0 0 * * *", client)
+	if err != nil {
+		log.Error(err)
+		os.Exit(1)
+	}
+
+	cron.Run()
 }
