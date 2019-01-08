@@ -1,5 +1,7 @@
 # ksync
 
+It is recommended to use `gcr.mirrors.ustc.edu.cn/google_containers`.
+
 ```shell
 export GIT_NAME=<your-github-name>
 export GIT_EMAIL=<your-github-email>

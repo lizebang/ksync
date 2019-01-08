@@ -6,10 +6,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
-
 	gogit "gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
+	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
 
 	"github.com/lizebang/ksync/log"
 )
